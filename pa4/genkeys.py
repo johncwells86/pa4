@@ -1,7 +1,7 @@
 import rsa
 
 def generate_keypair():
-    (publickey, privatekey) = rsa.newkeys(4096)
+    (publickey, privatekey) = rsa.newkeys(1024)
     return {"pub": publickey, "priv": privatekey}
     
 # Write the keys to a file on disk.
@@ -21,4 +21,5 @@ def write_keys(keys, name):
     return True
 
 write_keys(generate_keypair(), 'ka')
-write_keys(generate_keypair(), 'kc')    
+write_keys(generate_keypair(), 'kb')
+#write_keys(generate_keypair(), 'kc')    

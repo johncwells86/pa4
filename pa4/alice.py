@@ -1,93 +1,120 @@
 import pickle
 import socket
-import rsa
+import rsa, time
+import sys, getopt
 from rsa.bigfile import *
 from pyDes import *
-from io import BytesIO
-
-objList = []
-mes = "HELLO!"
-## Use 3DES to create a symmetric key
-#def create_symmetric():
-#    key = pyDes.des(b"DESCRYPT")
-#    return key
-
+    
 # Requests Kb+ from bob. The key is signed with Kc-. Use Kc+ to verify.
 def get_kc_pub():
     with open('keys/kcpub.pem') as keyfile:
         keydata = keyfile.read()
-#    print keydata
     return rsa.PublicKey.load_pkcs1(keydata)
 
 def get_ka_priv():
     with open('keys/kapriv.pem') as keyfile:
         keydata = keyfile.read()
-#    print keydata
     return rsa.PrivateKey.load_pkcs1(keydata)  
-  
-kapriv = get_ka_priv()
-kcpub = get_kc_pub()
-host = 'localhost'
-port = 10101
- 
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.connect((host, port))
- 
-#this should loop around until a delimeter is read
-#or something similar
-rcstring = pickle.loads(s.recv(2048))
 
-# Decrypt kb+ using kc+
-rsa.verify(rcstring[0], rcstring[1], kcpub)
+def start(mes, host, port, password):
+    
+    msg_payload = [] # Represents m + Ka-(H(m))
+    enchilada = [] # Represents Ks(*) + Kb+(Ks)
+    # Some variables...    
+    
+    # Obtain the necessary certificates...
+    print "Alice: Retrieving Ka- from disk"
+    kapriv = get_ka_priv()
+    print "Alice: Ka-:\n", kapriv
+    
+    print "Alice: \nObtaining Kc+ from 'CA'"
+    kcpub = get_kc_pub()
+    print "Alice: Kc+:\n", kcpub
+    
+    print "Alice: Opening connection to Bob..." 
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.connect((host, port))
+    time.sleep(2)
+    rcstring = ''
+    while True:
+        buf = s.recv(1024)
+        rcstring += buf
+        print len(buf)
+        if len(buf) < 1024:
+            break
+    
+    rcstring = pickle.loads(rcstring)
 
-bobpub = rsa.PublicKey.load_pkcs1(rcstring[0])
+    print "Alice: Received signed Kb+ from Bob... Now verifying authenticity..."
+    # Decrypt kb+ using kc+
+    try:
+        rsa.verify(rcstring[0], rcstring[1], kcpub)
+        print "Alice: Successfully verified Kb+ authenticity."
+    except:
+        print "Alice: Error: Could not verify authenticity of Bob! He might be an impostor!"
+        s.close()
+        return None
+    
+    bobpub = rsa.PublicKey.load_pkcs1(rcstring[0])
+    
+    print "Alice: Creating Message Payload (Message + Ka-(H(Message)))... "
+    # Hashed message, signed with Alice ka+.
+    signed_mes = rsa.sign(mes, kapriv, 'SHA-1')
+    print "Alice: Message and Signed message: ", mes, signed_mes
+    msg_payload.append(mes)
+    msg_payload.append(signed_mes)
+    
+#    password = b'passwordPASSWORD'
+    try:
+        cipher = triple_des(password)
+    except ValueError:
+        print "Alice: <password> must be 16 or 24 bits long. Assuming default..."
+        password = b'passwordPASSWORD'
+        
+    # Kb+(Ks)
+    print "Alice: Encrypting Symmetric Key with Bob's public key..."
+    bundledKey = rsa.encrypt(cipher.getKey(), bobpub)
+   
+    # Ks(m + Ka(H(m))) 
+    print "Alice: Encrypting the message payload with the Symmetric Key..."
+    secretBundle = cipher.encrypt(pickle.dumps(msg_payload), padmode=PAD_PKCS5)
+    
+    print "Alice: Bundling the Symmetric key and encrypted message payload together, serializing and sending to Bob."
+    enchilada.append(bundledKey)
+    enchilada.append(secretBundle)
+    
+    s.sendall(pickle.dumps(enchilada))
+    print "Alice: Successfully sent to Bob. Exiting..."
+    s.close()
+    return True
 
-objList.append(mes)
+def main(argv):
+    message = 'Goodbye from Alice!'
+    host = 'localhost'
+    port = 10111
+    password = b'passwordPASSWORD'
+    try:
+        opts, args = getopt.getopt(argv,"m:i:p:pw:",["message=","host=", "port=", "password="])
+    except getopt.GetoptError:
+        print 'alice.py -m <message> -i <host> -p <port> -pw <password>'
 
-# Hashed message, signed with Alice ka+.
-signed_mes = rsa.sign(mes, kapriv, 'SHA-1')
+        start(message, host, port, password)
+    for opt, arg in opts:
+        if opt in ("-m", "--message"):
+            message = arg
+        elif opt in ("-i", "--host"):
+            host = arg
+        elif opt in ("-p", "--port"):
+            port = arg
+        elif opt in ("-pw", "--password"):
+            password = arg
+    start(message, host, port, password)
 
-objList.append(signed_mes)
-
-##encrypt the top secret data!
-deskey = triple_des(b"passwordPASSWORD")
-
-#bundledKey = rsa.encrypt(pickle.dumps(deskey), bobpub)
-sendOver = []
-
-# Encode the 3DES key to a temporary file.
-infile = open('infile', 'w')
-pickle.dump(deskey, infile)
-infile.close()
-
-with open('infile', 'r') as infile, open('outfile', 'wb') as outfile1:
-    encrypt_bigfile(infile, outfile1, bobpub)
-outfile1 = open('outfile')
-sendOver.append(pickle.dumps(outfile1.read())) # Send the 3DES key over as a pickled file string.
-outfile1.close()
-
-# Encrypt (m + Ka(H(m))) 
-secretBundle = deskey.encrypt(pickle.dumps(objList), padmode=PAD_PKCS5)
-
-infile = BytesIO(secretBundle)
-outfile = BytesIO()
-encrypt_bigfile(infile, outfile, bobpub)
-sendOver.append(pickle.dumps(outfile.read()))
-
-## Encode secretBundle to file
-#infile = open('infile', 'wb')
-#pickle.dump(secretBundle, infile)
-#infile.close()
-#with open('infile', 'rb') as infile, open('outfile', 'wb') as outfile2:
-#    encrypt_bigfile(infile, outfile2, bobpub)
-#outfile2 = open('outfile')
-#sendOver.append(outfile2.read())
-#outfile2.close()
-
-#f = s.makefile('wb')
-#pickle.dump(sendOver[0], f, pickle.HIGHEST_PROTOCOL)
-print len(sendOver[0])
-s.sendall(sendOver[0])
-#f.close()
-s.close()
-
+if __name__ == '__main__':
+    main(sys.argv[1:])
+    
+    
+    
+    
+    
+    
