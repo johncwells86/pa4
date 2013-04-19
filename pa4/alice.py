@@ -97,8 +97,8 @@ def main(argv):
         opts, args = getopt.getopt(argv,"m:i:p:pw:",["message=","host=", "port=", "password="])
     except getopt.GetoptError:
         print 'alice.py -m <message> -i <host> -p <port> -pw <password>'
-
         start(message, host, port, password)
+        sys.exit(1)
     for opt, arg in opts:
         if opt in ("-m", "--message"):
             message = arg
