@@ -37,9 +37,9 @@ def start(host, port):
     
  
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind((host, port))
-    s.listen(0)
+    s.listen(1)
     
     print "Bob: Server is running on port %d." % port
      
@@ -68,13 +68,17 @@ def start(host, port):
             clientsock.close()
             continue
         
-        print "Bob: Retrieving 3DES key and IV..."
-        password = rsa.decrypt(enchilada[0], kbpriv)
-        cipher = triple_des(password)
-        print "Bob: Cipher created... Password is %s" % password
-        
+        print "Bob: Retrieving 3DES key, IV and other info..."
+        cipher_bundle = pickle.loads(rsa.decrypt(enchilada[0], kbpriv))
+        _password = cipher_bundle[0]
+        _mode = cipher_bundle[1]
+        _iv = cipher_bundle[2]
+        _padmode = cipher_bundle[3]
+        cipher = triple_des(_password, _mode, _iv, padmode=_padmode)
+        print "Bob: Cipher created successfully!"
         print "Bob: Decrypting message payload with 3DES cipher..."
         msg_payload = pickle.loads(cipher.decrypt(enchilada[1], padmode=PAD_PKCS5))
+        print "Bob: Decryption successful... Verifying hash..."
         try:
             rsa.verify(msg_payload[0], msg_payload[1], kapub)
             print "Bob: Success: Message successfully verified."
@@ -90,8 +94,7 @@ def start(host, port):
 def main(argv):
     
     host = ''
-    port = 10111
-    password = b'passwordPASSWORD'
+    port = 10101
     try:
         opts, args = getopt.getopt(argv,"i:p:",["host=", "port="])
     except getopt.GetoptError:

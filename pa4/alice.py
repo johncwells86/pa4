@@ -1,10 +1,20 @@
-import pickle
-import socket
+import pickle, string
+import socket, random
 import rsa, time
 import sys, getopt
-from rsa.bigfile import *
 from pyDes import *
-    
+
+  
+def iv_generator():
+    '''
+    Generates an 8-byte sequence of random values. This is used for the Initialization Vector for 3DES.
+    All ascii letters and digits are considered valid.
+    @return: 8-byte sequence of random ascii characters.
+    '''
+    size = 8 
+    chars = string.ascii_letters + string.digits
+    return ''.join(random.choice(chars) for x in range(size))
+  
 # Requests Kb+ from bob. The key is signed with Kc-. Use Kc+ to verify.
 def get_kc_pub():
     with open('keys/kcpub.pem') as keyfile:
@@ -20,8 +30,11 @@ def start(mes, host, port, password):
     
     msg_payload = [] # Represents m + Ka-(H(m))
     enchilada = [] # Represents Ks(*) + Kb+(Ks)
-    # Some variables...    
     
+    # Some variables...    
+    iv = iv_generator()
+    pad_mode = 2 # Used for pyDes.triple_des...
+    block_mode = 'CBC'
     # Obtain the necessary certificates...
     print "Alice: Retrieving Ka- from disk"
     kapriv = get_ka_priv()
@@ -66,14 +79,17 @@ def start(mes, host, port, password):
     
 #    password = b'passwordPASSWORD'
     try:
-        cipher = triple_des(password)
+        cipher = triple_des(password, block_mode, iv, None, padmode=pad_mode)
     except ValueError:
         print "Alice: <password> must be 16 or 24 bits long. Assuming default..."
         password = b'passwordPASSWORD'
-        
+        cipher = triple_des(password, block_mode, iv, None, padmode=pad_mode)
+    
+    print "Creating cipher bundle (password, block mode, IV, padding)..."
+    cipher_bundle = [cipher.getKey(), cipher.getMode(), cipher.getIV(), cipher.getPadMode()]    
     # Kb+(Ks)
     print "Alice: Encrypting Symmetric Key with Bob's public key..."
-    bundledKey = rsa.encrypt(cipher.getKey(), bobpub)
+    bundledKey = rsa.encrypt(pickle.dumps(cipher_bundle), bobpub)
    
     # Ks(m + Ka(H(m))) 
     print "Alice: Encrypting the message payload with the Symmetric Key..."
@@ -91,7 +107,7 @@ def start(mes, host, port, password):
 def main(argv):
     message = 'Goodbye from Alice!'
     host = 'localhost'
-    port = 10111
+    port = 10101
     password = b'passwordPASSWORD'
     try:
         opts, args = getopt.getopt(argv,"m:i:p:pw:",["message=","host=", "port=", "password="])
