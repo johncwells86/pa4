@@ -1,7 +1,7 @@
 import pickle, string
 import socket, random
 import rsa, time
-import sys, getopt
+import sys, argparse, logging
 from pyDes import *
 
   
@@ -36,15 +36,15 @@ def start(mes, host, port, password):
     pad_mode = 2 # Used for pyDes.triple_des...
     block_mode = 'CBC'
     # Obtain the necessary certificates...
-    print "Alice: Retrieving Ka- from disk"
+    logging.info("Alice: Retrieving Ka- from disk")
     kapriv = get_ka_priv()
-    print "Alice: Ka-:\n", kapriv
+    logging.info("Alice: Ka-:\n", kapriv)
     
-    print "Alice: \nObtaining Kc+ from 'CA'"
+    logging.info("Alice: \nObtaining Kc+ from 'CA'")
     kcpub = get_kc_pub()
-    print "Alice: Kc+:\n", kcpub
+    logging.info("Alice: Kc+:\n", kcpub)
     
-    print "Alice: Opening connection to Bob..." 
+    logging.info("Alice: Opening connection to Bob...") 
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.connect((host, port))
     time.sleep(2)
@@ -52,28 +52,27 @@ def start(mes, host, port, password):
     while True:
         buf = s.recv(1024)
         rcstring += buf
-        print len(buf)
         if len(buf) < 1024:
             break
     
     rcstring = pickle.loads(rcstring)
 
-    print "Alice: Received signed Kb+ from Bob... Now verifying authenticity..."
+    logging.info("Alice: Received signed Kb+ from Bob... Now verifying authenticity...")
     # Decrypt kb+ using kc+
     try:
         rsa.verify(rcstring[0], rcstring[1], kcpub)
-        print "Alice: Successfully verified Kb+ authenticity."
+        logging.info("Alice: Successfully verified Kb+ authenticity.")
     except:
-        print "Alice: Error: Could not verify authenticity of Bob! He might be an impostor!"
+        logging.info("Alice: Error: Could not verify authenticity of Bob! He might be an impostor!")
         s.close()
         return None
     
     bobpub = rsa.PublicKey.load_pkcs1(rcstring[0])
     
-    print "Alice: Creating Message Payload (Message + Ka-(H(Message)))... "
+    logging.info("Alice: Creating Message Payload (Message + Ka-(H(Message)))... ")
     # Hashed message, signed with Alice ka+.
     signed_mes = rsa.sign(mes, kapriv, 'SHA-1')
-    print "Alice: Message and Signed message: ", mes, signed_mes
+    logging.info("Alice: Message and Signed message:", mes)
     msg_payload.append(mes)
     msg_payload.append(signed_mes)
     
@@ -81,50 +80,60 @@ def start(mes, host, port, password):
     try:
         cipher = triple_des(password, block_mode, iv, None, padmode=pad_mode)
     except ValueError:
-        print "Alice: <password> must be 16 or 24 bits long. Assuming default..."
+        logging.info("Alice: <password> must be 16 or 24 bits long. Assuming default...")
         password = b'passwordPASSWORD'
         cipher = triple_des(password, block_mode, iv, None, padmode=pad_mode)
     
-    print "Creating cipher bundle (password, block mode, IV, padding)..."
+    logging.info("Creating cipher bundle (password, block mode, IV, padding)...")
     cipher_bundle = [cipher.getKey(), cipher.getMode(), cipher.getIV(), cipher.getPadMode()]    
     # Kb+(Ks)
-    print "Alice: Encrypting Symmetric Key with Bob's public key..."
+    logging.info("Alice: Encrypting Symmetric Key with Bob's public key...")
     bundledKey = rsa.encrypt(pickle.dumps(cipher_bundle), bobpub)
    
     # Ks(m + Ka(H(m))) 
-    print "Alice: Encrypting the message payload with the Symmetric Key..."
+    logging.info("Alice: Encrypting the message payload with the Symmetric Key...")
     secretBundle = cipher.encrypt(pickle.dumps(msg_payload), padmode=PAD_PKCS5)
     
-    print "Alice: Bundling the Symmetric key and encrypted message payload together, serializing and sending to Bob."
+    logging.info("Alice: Bundling the Symmetric key and encrypted message payload together, serializing and sending to Bob.")
     enchilada.append(bundledKey)
     enchilada.append(secretBundle)
     
     s.sendall(pickle.dumps(enchilada))
-    print "Alice: Successfully sent to Bob. Exiting..."
+    logging.info("Alice: Successfully sent to Bob. Exiting...")
     s.close()
     return True
 
 def main(argv):
     message = 'Goodbye from Alice!'
-    host = 'localhost'
-    port = 10101
     password = b'passwordPASSWORD'
-    try:
-        opts, args = getopt.getopt(argv,"m:i:p:pw:",["message=","host=", "port=", "password="])
-    except getopt.GetoptError:
-        print 'alice.py -m <message> -i <host> -p <port> -pw <password>'
-        start(message, host, port, password)
-        sys.exit(1)
-    for opt, arg in opts:
-        if opt in ("-m", "--message"):
-            message = arg
-        elif opt in ("-i", "--host"):
-            host = arg
-        elif opt in ("-p", "--port"):
-            port = arg
-        elif opt in ("-pw", "--password"):
-            password = arg
-    start(message, host, port, password)
+    log_level = logging.WARNING
+       
+    # Populate our options, -h/--help is already there for you.
+    parser = argparse.ArgumentParser(description='Connects to Bob and sends a secure, encrypted message.')
+    parser.add_argument("-v", "--verbose", help='Verbose output', action="store_true")
+    parser.add_argument('-i', '--host', help='Provide an external hostname/IP. Defaults to localhost.', default='localhost')
+    parser.add_argument('-p', '--port', help='Provide an external Port number. Defaults to 10101.', type=int, default=10101)
+    parser.add_argument('-P', '--password', help='Provide a 16/24 bit 3DES password. ')
+    parser.add_argument('-m', '--message', help='Message to send to Bob.')
+
+    args = parser.parse_args()
+    
+    if args.verbose:
+        log_level = logging.INFO
+    if args.password:
+        if len(args.password) is 16 or len(args.password) is 24:
+            password = args.password
+        else:
+            logging.info("Invalid password length. Assuming default.")
+    if args.message:
+        message = args.message
+    # Here would be a good place to check what came in on the command line and
+    # call optp.error("Useful message") to exit if all it not well.
+
+
+    # Set up basic configuration, out to stderr with a reasonable default format.
+    logging.basicConfig(level=log_level)
+    start(message, args.host, args.port, password)
 
 if __name__ == '__main__':
     main(sys.argv[1:])
